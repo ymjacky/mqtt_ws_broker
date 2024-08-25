@@ -1,6 +1,18 @@
 const port = 8080;
-const handler = (request: Request): Response => {
-  return new Response('hey hello');
-};
 
-Deno.serve(handler);
+export class WsBroker {
+  handler: Deno.ServeHandler;
+
+  constructor() {
+    this.handler = (request: Request): Response => {
+      return new Response('hey hello hello');
+    };
+  }
+
+  listen(port: number) {
+    Deno.serve({ port: port, handler: this.handler });
+  }
+}
+
+const broker = new WsBroker();
+broker.listen(port);

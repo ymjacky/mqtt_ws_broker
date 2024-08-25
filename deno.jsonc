@@ -7,7 +7,6 @@
   "tasks": {
     "dev": "deno run --allow-net --watch server.ts",
     "start": "deno run --allow-net server.ts",
-    "deploy": "deployctl deploy"
   },
   "fmt": {
     "indentWidth": 2,

@@ -2,11 +2,11 @@
   "name": "@ymjacky/mqtt_ws_broker",
   "version": "0.0.1",
   "exports": {
-    ".": "./server.ts",
+    ".": "./server.ts"
   },
   "tasks": {
     "dev": "deno run --allow-net --watch server.ts",
-    "start": "deno run --allow-net server.ts",
+    "start": "deno run --allow-net server.ts"
   },
   "fmt": {
     "indentWidth": 2,
@@ -27,7 +27,5 @@
 
     "report": "pretty"
   },
-  "imports": {
-    "@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@^0.0.11"
-  }
+  "imports": { "@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@^0.0.14" }
 }

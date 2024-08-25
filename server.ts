@@ -1,4 +1,4 @@
-import { Mqtt, MqttPackets, MqttProperties } from '@ymjacky/mqtt5';
+import { Cache, Mqtt, MqttPackets, MqttProperties } from '@ymjacky/mqtt5';
 
 // 接続クライアント
 class Client {
@@ -68,6 +68,7 @@ export class WsBroker extends EventTarget {
   handler: Deno.ServeHandler;
 
   clients: Map<string, Client>;
+  accessList: Cache.LruCache<string, Date>;
 
   on = <T extends keyof CustomEventMap>(
     type: T,
@@ -75,6 +76,76 @@ export class WsBroker extends EventTarget {
   ) => {
     this.addEventListener(type, callback as EventListener);
   };
+
+  constructor() {
+    super();
+    this.clients = new Map<string, Client>();
+    this.accessList = new Cache.LruCache<string, Date>(100, 10); // ip, age
+
+    // websocket接続イベント
+    this.on('accept', (event) => {
+      const conn: WebSocket = event.detail;
+
+      this.setupMqttEvent(conn);
+    });
+
+    /**
+     * HTTPハンドラー
+     * GETメソッドでwebsocketのupgradeのリクエストが来た時、MQTTの接続シーケンスへ移る
+     */
+    this.handler = (request: Request, info: Deno.ServeHandlerInfo): Response => {
+      const { method } = request;
+      const remoteHost = info.remoteAddr.hostname;
+      const userAgent = request.headers.get('user-agent');
+
+      log(`connecting from ${remoteHost}:${info.remoteAddr.port} , user-agent: ${userAgent}`);
+
+      // DOS対策
+      {
+        const lastAccess = this.accessList.get(remoteHost);
+        if (lastAccess) {
+          debug(`last access. remoteHost: ${remoteHost}, ${lastAccess}`);
+          let later: Date = new Date(lastAccess);
+          later.setSeconds(lastAccess.getSeconds() + 30); // 30秒後
+
+          debug(`later: ${later}, now ${new Date()}`);
+          if (later > new Date()) {
+            // 30秒以内のアクセスは拒絶
+            error(`Deny continuous access. address: ${remoteHost}`);
+            // return new Response('Too Many Requests', { status: 429 }); // 429: Too Many Requests
+            return new Response(null, { status: 429 }); // 429: Too Many Requests
+          }
+        }
+        debug(`append accessList. remoteHost: ${remoteHost}`);
+        this.accessList.set(remoteHost, new Date());
+      }
+
+      if (method === 'GET') {
+        if (request.headers.get('upgrade') === 'websocket') {
+          log(`receive upgradeWebSocket`);
+          const { socket, response } = Deno.upgradeWebSocket(request);
+          socket.binaryType = 'arraybuffer';
+
+          this.dispatchEvent(
+            createCustomEvent('accept', { detail: socket }),
+          );
+
+          return response;
+        }
+      } else {
+        // method != GET
+        // return new Response('Not Found', { status: 404 }); // 404: Not Found
+        return new Response(null, { status: 404 }); // 404: Not Found
+      }
+
+      return new Response(`hello. ${new Date()}`);
+    };
+  }
+
+  listen(port: number) {
+    log(`broker started. port: ${port}`);
+    Deno.serve({ port: port, handler: this.handler });
+  }
 
   private setupMqttEvent(conn: WebSocket) {
     conn.onclose = (_e: CloseEvent) => {
@@ -231,22 +302,22 @@ export class WsBroker extends EventTarget {
       if (connect.protocolVersion > Mqtt.ProtocolVersion.MQTT_V3_1_1) {
         const connackProperties: MqttProperties.ConnackProperties = {
           sessionExpiryInterval: 0,
-          receiveMaximum: 10,
+          // receiveMaximum: 10,
           maximumQoS: 2,
-          retainAvailable: true,
-          maximumPacketSize: 128,
-          assignedClientIdentifier: 'cid2',
-          topicAliasMaximum: 11,
-          reasonString: 'NotAuthorized',
-          userProperties: [
-            { key: 'userProp1', val: 'userData1' },
-            { key: 'userProp2', val: 'userData2' },
-            { key: 'userProp2', val: 'userData3' },
-          ],
-          wildcardSubscriptionAvailable: true,
-          subscriptionIdentifiersAvailable: true,
-          sharedSubscriptionAvailable: true,
-          serverKeepAlive: 40,
+          retainAvailable: false,
+          // maximumPacketSize: 128,
+          // assignedClientIdentifier: 'cid2',
+          // topicAliasMaximum: 11,
+          // reasonString: 'NotAuthorized',
+          // userProperties: [
+          //   { key: 'userProp1', val: 'userData1' },
+          //   { key: 'userProp2', val: 'userData2' },
+          //   { key: 'userProp2', val: 'userData3' },
+          // ],
+          wildcardSubscriptionAvailable: false,
+          subscriptionIdentifiersAvailable: false,
+          sharedSubscriptionAvailable: false,
+          serverKeepAlive: 30,
           // responseInformation: 'response_topic',
           // serverReference: 'mqtt://127.0.0.1:11883',
           // authenticationMethod: 'digest',
@@ -268,52 +339,6 @@ export class WsBroker extends EventTarget {
       const bytes = MqttPackets.packetToBytes(connack, connect.protocolVersion);
       await socket.send(bytes);
     }
-  }
-
-  constructor() {
-    super();
-    this.clients = new Map<string, Client>();
-
-    // websocket接続イベント
-    this.on('accept', (event) => {
-      const conn: WebSocket = event.detail;
-
-      this.setupMqttEvent(conn);
-    });
-
-    /**
-     * HTTPハンドラー
-     * GETメソッドでwebsocketのupgradeのリクエストが来た時、MQTTの接続シーケンスへ移る
-     */
-    this.handler = (request: Request, info: Deno.ServeHandlerInfo): Response => {
-      const { method } = request;
-
-      log(`connecting from ${info.remoteAddr.hostname}:${info.remoteAddr.port} , user-agent: ${request.headers.get('user-agent')}`);
-
-      if (method === 'GET') {
-        if (request.headers.get('upgrade') === 'websocket') {
-          log(`receive upgradeWebSocket`);
-          const { socket, response } = Deno.upgradeWebSocket(request);
-          socket.binaryType = 'arraybuffer';
-
-          this.dispatchEvent(
-            createCustomEvent('accept', { detail: socket }),
-          );
-
-          return response;
-        }
-      } else {
-        // method != GET
-        return new Response('Not Found', { status: 404 });
-      }
-
-      return new Response(`hello. ${new Date()}`);
-    };
-  }
-
-  listen(port: number) {
-    log(`broker started. port: ${port}`);
-    Deno.serve({ port: port, handler: this.handler });
   }
 }
 

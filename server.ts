@@ -104,19 +104,18 @@ export class WsBroker extends EventTarget {
       {
         const lastAccess = this.accessList.get(remoteHost);
         if (lastAccess) {
-          debug(`last access. remoteHost: ${remoteHost}, ${lastAccess}`);
+          // debug(`last access. remoteHost: ${remoteHost}, ${lastAccess}`);
           let later: Date = new Date(lastAccess);
           later.setSeconds(lastAccess.getSeconds() + 30); // 30秒後
 
-          debug(`later: ${later}, now ${new Date()}`);
+          // debug(`later: ${later}, now ${new Date()}`);
           if (later > new Date()) {
             // 30秒以内のアクセスは拒絶
             error(`Deny continuous access. address: ${remoteHost}`);
-            // return new Response('Too Many Requests', { status: 429 }); // 429: Too Many Requests
             return new Response(null, { status: 429 }); // 429: Too Many Requests
           }
         }
-        debug(`append accessList. remoteHost: ${remoteHost}`);
+        // debug(`append accessList. remoteHost: ${remoteHost}`);
         this.accessList.set(remoteHost, new Date());
       }
 

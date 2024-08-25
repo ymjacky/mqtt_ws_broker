@@ -1,3 +1,6 @@
-import { serve } from 'https://deno.land/std@0.140.0/http/server.ts';
+const port = 8080;
+const handler = (request: Request): Response => {
+  return new Response('hey hello');
+};
 
-serve(() => new Response('Hello world , YES'));
+Deno.serve(handler);

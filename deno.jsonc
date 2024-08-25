@@ -1,0 +1,28 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-net --watch server.ts",
+    "start": "deno run --allow-net server.ts"
+  },
+  "fmt": {
+    "indentWidth": 2,
+    "singleQuote": true,
+    "lineWidth": 160,
+    "include": [
+      "server.ts"
+    ]
+  },
+  "lint": {
+    "include": ["deno", "lib", "test"],
+    "exclude": ["./exclude/"],
+
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": ["ban-untagged-todo"]
+    },
+
+    "report": "pretty"
+  },
+  "imports": {
+    "@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@^0.0.11"
+  }
+}

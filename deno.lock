@@ -2,6 +2,7 @@
   "version": "3",
   "packages": {
     "specifiers": {
+      "jsr:@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@0.0.14",
       "jsr:@ymjacky/mqtt5@^0.0.14": "jsr:@ymjacky/mqtt5@0.0.14"
     },
     "jsr": {

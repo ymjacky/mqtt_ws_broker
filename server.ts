@@ -122,7 +122,7 @@ export class WsBroker extends EventTarget {
       if (method === 'GET') {
         if (request.headers.get('upgrade') === 'websocket') {
           log(`receive upgradeWebSocket`);
-          const { socket, response } = Deno.upgradeWebSocket(request);
+          const { socket, response } = Deno.upgradeWebSocket(request, { protocol: 'mqtt' });
           socket.binaryType = 'arraybuffer';
 
           this.dispatchEvent(

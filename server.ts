@@ -1,4 +1,5 @@
 import { Cache, Mqtt, MqttPackets, MqttProperties } from '@ymjacky/mqtt5';
+import { extname } from '@std/path';
 
 // 接続クライアント
 class Client {
@@ -112,11 +113,16 @@ export class WsBroker extends EventTarget {
       const remoteHost = info.remoteAddr.hostname;
       const userAgent = request.headers.get('user-agent');
 
-      log(`connecting from ${remoteHost}:${info.remoteAddr.port} , user-agent: ${userAgent}`);
+      debug(`connecting from ${remoteHost}:${info.remoteAddr.port} , user-agent: ${userAgent}`);
+
+      const url = new URL(request.url);
+      debug('path', url.pathname);
+      const ext = extname(url.pathname);
 
       // DOS対策
       {
-        const lastAccess = this.accessList.get(remoteHost);
+        const dosKey = `${remoteHost}:${ext}`; // IP Address : extname
+        const lastAccess = this.accessList.get(dosKey);
         if (lastAccess) {
           // debug(`last access. remoteHost: ${remoteHost}, ${lastAccess}`);
           let later: Date = new Date(lastAccess);
@@ -130,12 +136,12 @@ export class WsBroker extends EventTarget {
           }
         }
         // debug(`append accessList. remoteHost: ${remoteHost}`);
-        this.accessList.set(remoteHost, new Date());
+        this.accessList.set(dosKey, new Date());
       }
 
       if (method === 'GET') {
         if (request.headers.get('upgrade') === 'websocket') {
-          log(`receive upgradeWebSocket`);
+          debug(`receive upgradeWebSocket`);
           const { socket, response } = Deno.upgradeWebSocket(request, { protocol: 'mqtt' });
           socket.binaryType = 'arraybuffer';
 
@@ -145,28 +151,41 @@ export class WsBroker extends EventTarget {
 
           return response;
         }
+
+        const fileurl = new URL(`file://.${url.pathname}`);
+        const file = Deno.readFileSync(`.${url.pathname}`);
+        let contentType = 'text/html';
+        if ('.mjs' === ext) {
+          contentType = 'text/javascript';
+        }
+
+        return new Response(file, {
+          headers: {
+            'content-type': contentType,
+          },
+        });
       } else {
         // method != GET
         // return new Response('Not Found', { status: 404 }); // 404: Not Found
         return new Response(null, { status: 404 }); // 404: Not Found
       }
 
-      return new Response(`hello. ${new Date()}`);
+      // return new Response(`hello. ${new Date()}`);
     };
   }
 
   listen(port: number) {
-    log(`broker started. port: ${port}`);
+    debug(`broker started. port: ${port}`);
     Deno.serve({ port: port, handler: this.handler });
   }
 
   private adjustReadBytes(conn: WebSocket, data: Uint8Array): Array<Uint8Array> {
     const packets: Array<Uint8Array> = [];
-    let readBuffer = this.buffersMap.get(conn);
-    if (typeof readBuffer === 'undefined') {
-      readBuffer = [];
-    }
-    readBuffer.push(...data);
+    let readBuffer = this.buffersMap.get(conn) || [];
+
+    data.forEach((byte) => {
+      readBuffer.push(byte);
+    });
     this.buffersMap.set(conn, readBuffer);
 
     // lambda
@@ -215,7 +234,7 @@ export class WsBroker extends EventTarget {
 
   private setupMqttEvent(conn: WebSocket) {
     conn.onclose = (_e: CloseEvent) => {
-      log('websocket connection closed');
+      debug('websocket connection closed');
       this.buffersMap.delete(conn);
       if (this.clients.has(conn)) {
         this.clients.delete(conn);
@@ -228,7 +247,7 @@ export class WsBroker extends EventTarget {
 
     conn.onerror = (e: Event) => {
       if (e instanceof ErrorEvent) {
-        log('error occured.', e.message);
+        debug('error occured.', e.message);
       }
       conn.close();
     };
@@ -486,6 +505,7 @@ export class WsBroker extends EventTarget {
       error('handleMqttPuback', `unknown client`);
     }
   }
+
   async handleMqttPubrec(socket: WebSocket, pubrec: MqttPackets.PubrecPacket): Promise<void> {
     const client = this.clients.get(socket);
     if (client) {
@@ -504,6 +524,7 @@ export class WsBroker extends EventTarget {
       error('handleMqttPubrec', `unknown client`);
     }
   }
+
   async handleMqttPubrel(socket: WebSocket, pubrel: MqttPackets.PubrelPacket): Promise<void> {
     const client = this.clients.get(socket);
     if (client) {
@@ -521,6 +542,7 @@ export class WsBroker extends EventTarget {
       error('handleMqttPubrel', `unknown client`);
     }
   }
+
   async handleMqttPubcomp(socket: WebSocket, pubcomp: MqttPackets.PubcompPacket): Promise<void> {
     const client = this.clients.get(socket);
     if (client) {
@@ -569,4 +591,4 @@ export class WsBroker extends EventTarget {
 }
 
 const broker = new WsBroker();
-broker.listen(8080);
+broker.listen(3000);

@@ -6,7 +6,7 @@
   },
   "tasks": {
     "dev": "deno run --allow-net --watch server.ts",
-    "start": "deno run --allow-net server.ts"
+    "start": "deno run --allow-net --allow-read server.ts"
   },
   "fmt": {
     "indentWidth": 2,
@@ -27,5 +27,5 @@
 
     "report": "pretty"
   },
-  "imports": { "@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@^0.0.16" }
+  "imports": { "@std/path": "jsr:@std/path@^1.0.6", "@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@^0.0.16" }
 }

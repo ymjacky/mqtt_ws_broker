@@ -72,7 +72,7 @@ const info = (msg: string, ...args: unknown[]): void => {
   log(`[info ] ${msg}`, ...args);
 };
 const debug = (msg: string, ...args: unknown[]): void => {
-  log(`[debug] ${msg}`, ...args);
+  // log(`[debug] ${msg}`, ...args);
 };
 const error = (msg: string, ...args: unknown[]): void => {
   log(`[error] ${msg}`, ...args);
@@ -155,14 +155,14 @@ export class WsBroker extends EventTarget {
         }
 
         const fileurl = new URL(`file://.${url.pathname}`);
-        if (fileurl.pathname === '/index.html') {
+        if ((fileurl.pathname === '/index.html') || (fileurl.pathname === '/mqtt5.mjs')) {
           info(`get ${fileurl.pathname}. host: ${remoteHost}`);
           const file = Deno.readFileSync(`.${url.pathname}`);
           let contentType = 'text/html';
           if ('.mjs' === ext) {
             contentType = 'text/javascript';
           }
-
+          debug(`contentType: ${contentType}, ext: ${ext}`);
           return new Response(file, {
             headers: {
               'content-type': contentType,

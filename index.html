@@ -17,7 +17,7 @@
         const client = new WebSocketMqttClient({
           // url: new URL(`ws://${location.host}`),
           url: new URL(`wss://${location.host}`),
-          clientId: 'publisherB',
+          clientId: 'monitor',
           clean: true,
           logger: logger,
           protocolVersion: Mqtt.ProtocolVersion.MQTT_V5,

@@ -68,7 +68,9 @@ const createCustomEvent = <T extends keyof CustomEventMap>(
 const log = (msg: string, ...args: unknown[]): void => {
   console.log(`${msg}`, ...args);
 };
-
+const info = (msg: string, ...args: unknown[]): void => {
+  log(`[info ] ${msg}`, ...args);
+};
 const debug = (msg: string, ...args: unknown[]): void => {
   log(`[debug] ${msg}`, ...args);
 };
@@ -108,12 +110,12 @@ export class WsBroker extends EventTarget {
      * HTTPハンドラー
      * GETメソッドでwebsocketのupgradeのリクエストが来た時、MQTTの接続シーケンスへ移る
      */
-    this.handler = (request: Request, info: Deno.ServeHandlerInfo): Response => {
+    this.handler = (request: Request, handlerInfo: Deno.ServeHandlerInfo): Response => {
       const { method } = request;
-      const remoteHost = info.remoteAddr.hostname;
+      const remoteHost = handlerInfo.remoteAddr.hostname;
       const userAgent = request.headers.get('user-agent');
 
-      debug(`connecting from ${remoteHost}:${info.remoteAddr.port} , user-agent: ${userAgent}`);
+      info(`connecting from ${remoteHost}:${handlerInfo.remoteAddr.port} , user-agent: ${userAgent}`);
 
       const url = new URL(request.url);
       debug('path', url.pathname);
@@ -141,7 +143,7 @@ export class WsBroker extends EventTarget {
 
       if (method === 'GET') {
         if (request.headers.get('upgrade') === 'websocket') {
-          debug(`receive upgradeWebSocket`);
+          info(`receive upgradeWebSocket. host: ${remoteHost}`);
           const { socket, response } = Deno.upgradeWebSocket(request, { protocol: 'mqtt' });
           socket.binaryType = 'arraybuffer';
 
@@ -153,29 +155,32 @@ export class WsBroker extends EventTarget {
         }
 
         const fileurl = new URL(`file://.${url.pathname}`);
-        const file = Deno.readFileSync(`.${url.pathname}`);
-        let contentType = 'text/html';
-        if ('.mjs' === ext) {
-          contentType = 'text/javascript';
-        }
+        if (fileurl.pathname === '/index.html') {
+          info(`get ${fileurl.pathname}. host: ${remoteHost}`);
+          const file = Deno.readFileSync(`.${url.pathname}`);
+          let contentType = 'text/html';
+          if ('.mjs' === ext) {
+            contentType = 'text/javascript';
+          }
 
-        return new Response(file, {
-          headers: {
-            'content-type': contentType,
-          },
-        });
+          return new Response(file, {
+            headers: {
+              'content-type': contentType,
+            },
+          });
+        }
       } else {
         // method != GET
         // return new Response('Not Found', { status: 404 }); // 404: Not Found
         return new Response(null, { status: 404 }); // 404: Not Found
       }
 
-      // return new Response(`hello. ${new Date()}`);
+      return new Response(`hello. ${new Date()}`);
     };
   }
 
   listen(port: number) {
-    debug(`broker started. port: ${port}`);
+    info(`broker started. port: ${port}`);
     Deno.serve({ port: port, handler: this.handler });
   }
 
@@ -234,7 +239,7 @@ export class WsBroker extends EventTarget {
 
   private setupMqttEvent(conn: WebSocket) {
     conn.onclose = (_e: CloseEvent) => {
-      debug('websocket connection closed');
+      info('websocket connection closed');
       this.buffersMap.delete(conn);
       if (this.clients.has(conn)) {
         this.clients.delete(conn);
@@ -247,7 +252,7 @@ export class WsBroker extends EventTarget {
 
     conn.onerror = (e: Event) => {
       if (e instanceof ErrorEvent) {
-        debug('error occured.', e.message);
+        info('error occured.', e.message);
       }
       conn.close();
     };
@@ -576,7 +581,7 @@ export class WsBroker extends EventTarget {
   async handleMqttPingreq(socket: WebSocket): Promise<void> {
     const client = this.clients.get(socket);
     if (client) {
-      debug('handleMqttConnect', `clientId: ${client.clientId}`);
+      info('handleMqttConnect', `clientId: ${client.clientId}`);
       const pingresp: MqttPackets.PingrespPacket = {
         type: 'pingresp',
       };

@@ -581,7 +581,7 @@ export class WsBroker extends EventTarget {
   async handleMqttPingreq(socket: WebSocket): Promise<void> {
     const client = this.clients.get(socket);
     if (client) {
-      info('handleMqttConnect', `clientId: ${client.clientId}`);
+      info('handleMqttPingreq', `clientId: ${client.clientId}`);
       const pingresp: MqttPackets.PingrespPacket = {
         type: 'pingresp',
       };
@@ -590,7 +590,7 @@ export class WsBroker extends EventTarget {
       debug('send bytes', bytes);
       await socket.send(bytes);
     } else {
-      error('handleMqttConnect', `unknown client`);
+      error('handleMqttPingreq', `unknown client`);
     }
   }
 }

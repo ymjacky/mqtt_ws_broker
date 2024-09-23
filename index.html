@@ -15,8 +15,8 @@
 
       async function main() {
         const client = new WebSocketMqttClient({
-          url: new URL(`ws://${location.host}`),
-          // url: new URL(`wss://${location.host}`),
+          // url: new URL(`ws://${location.host}`),
+          url: new URL(`wss://${location.host}`),
           clientId: 'publisherB',
           clean: true,
           logger: logger,

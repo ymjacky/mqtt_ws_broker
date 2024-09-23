@@ -2,12 +2,11 @@
   "version": "3",
   "packages": {
     "specifiers": {
-      "jsr:@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@0.0.14",
-      "jsr:@ymjacky/mqtt5@^0.0.14": "jsr:@ymjacky/mqtt5@0.0.14"
+      "jsr:@ymjacky/mqtt5@^0.0.16": "jsr:@ymjacky/mqtt5@0.0.16"
     },
     "jsr": {
-      "@ymjacky/mqtt5@0.0.14": {
-        "integrity": "f16b09b49379ff7ba625cae08ce26bdcf1a02e819d9d6540a9b31eebc57f1bfd"
+      "@ymjacky/mqtt5@0.0.16": {
+        "integrity": "b7820efa41ab992555d07800dd587c1e1a9dc81b649a7fb8db61b27f7a0ef60c"
       }
     }
   },
@@ -27,7 +26,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@ymjacky/mqtt5@^0.0.14"
+      "jsr:@ymjacky/mqtt5@^0.0.16"
     ]
   }
 }

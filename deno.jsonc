@@ -27,5 +27,5 @@
 
     "report": "pretty"
   },
-  "imports": { "@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@^0.0.14" }
+  "imports": { "@ymjacky/mqtt5": "jsr:@ymjacky/mqtt5@^0.0.16" }
 }

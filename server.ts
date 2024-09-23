@@ -5,6 +5,7 @@ class Client {
   public clientId: string;
   public protocolVersion: Mqtt.ProtocolVersion;
   public conn: WebSocket;
+  private subscription: Map<string, number>;
 
   constructor(
     clientId: string,
@@ -14,11 +15,20 @@ class Client {
     this.clientId = clientId;
     this.protocolVersion = protocolVersion;
     this.conn = conn;
+    this.subscription = new Map<string, number>();
   }
 
   async destrory() {
     this.conn.close();
     return await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  public subscribe(topicFilter: string, qos: number) {
+    this.subscription.set(topicFilter, qos);
+  }
+
+  public hasSubscription(topicFilter: string) {
+    return this.subscription.has(topicFilter);
   }
 }
 
@@ -57,6 +67,7 @@ const createCustomEvent = <T extends keyof CustomEventMap>(
 const log = (msg: string, ...args: unknown[]): void => {
   console.log(`${msg}`, ...args);
 };
+
 const debug = (msg: string, ...args: unknown[]): void => {
   log(`[debug] ${msg}`, ...args);
 };
@@ -67,8 +78,10 @@ const error = (msg: string, ...args: unknown[]): void => {
 export class WsBroker extends EventTarget {
   handler: Deno.ServeHandler;
 
-  clients: Map<string, Client>;
+  clients: Map<WebSocket, Client>;
   accessList: Cache.LruCache<string, Date>;
+
+  private buffersMap: Map<WebSocket, Array<number>>;
 
   on = <T extends keyof CustomEventMap>(
     type: T,
@@ -79,13 +92,14 @@ export class WsBroker extends EventTarget {
 
   constructor() {
     super();
-    this.clients = new Map<string, Client>();
+    this.clients = new Map<WebSocket, Client>();
     this.accessList = new Cache.LruCache<string, Date>(100, 10); // ip, age
+
+    this.buffersMap = new Map<WebSocket, Array<number>>();
 
     // websocket接続イベント
     this.on('accept', (event) => {
       const conn: WebSocket = event.detail;
-
       this.setupMqttEvent(conn);
     });
 
@@ -146,9 +160,67 @@ export class WsBroker extends EventTarget {
     Deno.serve({ port: port, handler: this.handler });
   }
 
+  private adjustReadBytes(conn: WebSocket, data: Uint8Array): Array<Uint8Array> {
+    const packets: Array<Uint8Array> = [];
+    let readBuffer = this.buffersMap.get(conn);
+    if (typeof readBuffer === 'undefined') {
+      readBuffer = [];
+    }
+    readBuffer.push(...data);
+    this.buffersMap.set(conn, readBuffer);
+
+    // lambda
+    const readRemaingLength = (byte: number, multiplier: number): [boolean, number] => {
+      let hasNext = false;
+      const len = (byte & 0b01111111) * multiplier;
+      if ((byte & 0b10000000) != 0) {
+        hasNext = true;
+      }
+      return [hasNext, len];
+    };
+
+    let cursol = 0;
+    let multiplier = 1;
+    let remainingLength = 0;
+    let remainingLemgthFieldSize = 1;
+
+    while (readBuffer.length > cursol) {
+      cursol++;
+      const tpl = readRemaingLength(readBuffer[cursol], multiplier);
+      const hasNext = tpl[0];
+      remainingLength += tpl[1];
+      if (hasNext) {
+        multiplier *= 128;
+        remainingLemgthFieldSize++;
+        continue;
+      }
+
+      const fixedHeaderLength = 1 + remainingLemgthFieldSize; // 1: packetType field
+      const packetLength = fixedHeaderLength + remainingLength;
+      if (readBuffer.length < packetLength) {
+        break;
+      }
+
+      // Packet length is sufficient
+      const receiveByte = new Uint8Array([...readBuffer.slice(0, packetLength)]);
+      readBuffer = readBuffer.slice(packetLength);
+      this.buffersMap.set(conn, readBuffer);
+      cursol = 0;
+
+      packets.push(receiveByte);
+    }
+
+    return packets;
+  }
+
   private setupMqttEvent(conn: WebSocket) {
     conn.onclose = (_e: CloseEvent) => {
       log('websocket connection closed');
+      this.buffersMap.delete(conn);
+      if (this.clients.has(conn)) {
+        this.clients.delete(conn);
+      }
+
       this.dispatchEvent(
         createCustomEvent('closed', {}),
       );
@@ -162,110 +234,109 @@ export class WsBroker extends EventTarget {
     };
 
     conn.onmessage = (e: MessageEvent<unknown>) => {
-      const receiveBytes = new Uint8Array(e.data as ArrayBuffer);
-      debug('receive bytes', receiveBytes);
-      const packet = MqttPackets.decode(receiveBytes);
-      debug('receive packet', packet);
+      const temporaryReceiveBytes = new Uint8Array(e.data as ArrayBuffer);
+      const packets = this.adjustReadBytes(conn, temporaryReceiveBytes);
+      packets.forEach((receiveBytes) => {
+        debug('receive bytes', receiveBytes);
+        const packet = MqttPackets.decode(receiveBytes);
+        debug('receive packet', packet);
 
-      switch (packet.type) {
-        case 'connect':
-          this.handleMqttConnect(conn, packet);
+        switch (packet.type) {
+          case 'connect':
+            this.handleMqttConnect(conn, packet);
+            break;
+          case 'publish':
+            this.handleMqttPublish(conn, packet);
+            this.dispatchEvent(
+              createCustomEvent('publish', {
+                detail: packet as MqttPackets.PublishPacket,
+              }),
+            );
+            break;
+          case 'puback':
+            this.handleMqttPuback(conn, packet);
+            this.dispatchEvent(
+              createCustomEvent('puback', {
+                detail: packet as MqttPackets.PubackPacket,
+              }),
+            );
+            break;
+          case 'pubrec':
+            this.handleMqttPubrec(conn, packet);
+            this.dispatchEvent(
+              createCustomEvent('pubrec', {
+                detail: packet as MqttPackets.PubrecPacket,
+              }),
+            );
+            break;
+          case 'pubrel':
+            this.handleMqttPubrel(conn, packet);
+            this.dispatchEvent(
+              createCustomEvent('pubrel', {
+                detail: packet as MqttPackets.PubrelPacket,
+              }),
+            );
+            break;
+          case 'pubcomp':
+            this.handleMqttPubcomp(conn, packet);
+            this.dispatchEvent(
+              createCustomEvent('pubcomp', {
+                detail: packet as MqttPackets.PubcompPacket,
+              }),
+            );
+            break;
+          case 'subscribe':
+            this.handleMqttSubscribe(conn, packet);
+            this.dispatchEvent(
+              createCustomEvent('subscribe', {
+                detail: packet as MqttPackets.SubscribePacket,
+              }),
+            );
+            break;
 
-          // this.clients.set(
-          //   packet.clientId,
-          //   new Client(packet.clientId, packet.protocolVersion, conn),
-          // );
+          case 'unsubscribe':
+            this.dispatchEvent(
+              createCustomEvent('unsubscribe', {
+                detail: packet as MqttPackets.UnsubscribePacket,
+              }),
+            );
+            break;
 
-          // this.dispatchEvent(
-          //   createCustomEvent('connect', {
-          //     detail: packet as MqttPackets.ConnectPacket,
-          //   }),
-          // );
-          break;
-        case 'publish':
-          this.dispatchEvent(
-            createCustomEvent('publish', {
-              detail: packet as MqttPackets.PublishPacket,
-            }),
-          );
-          break;
-        case 'puback':
-          this.dispatchEvent(
-            createCustomEvent('puback', {
-              detail: packet as MqttPackets.PubackPacket,
-            }),
-          );
-          break;
-        case 'pubrec':
-          this.dispatchEvent(
-            createCustomEvent('pubrec', {
-              detail: packet as MqttPackets.PubrecPacket,
-            }),
-          );
-          break;
-        case 'pubrel':
-          this.dispatchEvent(
-            createCustomEvent('pubrel', {
-              detail: packet as MqttPackets.PubrelPacket,
-            }),
-          );
-          break;
-        case 'pubcomp':
-          this.dispatchEvent(
-            createCustomEvent('pubcomp', {
-              detail: packet as MqttPackets.PubcompPacket,
-            }),
-          );
-          break;
-        case 'subscribe':
-          this.dispatchEvent(
-            createCustomEvent('subscribe', {
-              detail: packet as MqttPackets.SubscribePacket,
-            }),
-          );
-          break;
+          case 'pingreq':
+            this.handleMqttPingreq(conn);
+            this.dispatchEvent(
+              createCustomEvent('pingreq', {
+                detail: packet as MqttPackets.PingreqPacket,
+              }),
+            );
+            break;
 
-        case 'unsubscribe':
-          this.dispatchEvent(
-            createCustomEvent('unsubscribe', {
-              detail: packet as MqttPackets.UnsubscribePacket,
-            }),
-          );
-          break;
+          case 'disconnect':
+            this.dispatchEvent(
+              createCustomEvent('disconnect', {
+                detail: packet as MqttPackets.DisconnectPacket,
+              }),
+            );
+            break;
 
-        case 'pingreq':
-          this.dispatchEvent(
-            createCustomEvent('pingreq', {
-              detail: packet as MqttPackets.PingreqPacket,
-            }),
-          );
-          break;
-
-        case 'disconnect':
-          this.dispatchEvent(
-            createCustomEvent('disconnect', {
-              detail: packet as MqttPackets.DisconnectPacket,
-            }),
-          );
-          break;
-
-        case 'auth':
-          log('receive auth packet');
-          this.dispatchEvent(
-            createCustomEvent('auth', {
-              detail: packet as MqttPackets.AuthPacket,
-            }),
-          );
-          break;
-        default:
-          error('An unexpected packet was received.', `packet: ${packet}`);
-          break;
-      }
+          case 'auth':
+            debug('receive auth packet');
+            this.dispatchEvent(
+              createCustomEvent('auth', {
+                detail: packet as MqttPackets.AuthPacket,
+              }),
+            );
+            break;
+          default:
+            error('An unexpected packet was received.', `packet: ${packet}`);
+            break;
+        }
+      });
     };
   }
 
   async handleMqttConnect(socket: WebSocket, connect: MqttPackets.ConnectPacket): Promise<void> {
-    log('receive connect packet');
+    debug('handleMqttConnect', `clientId: ${connect.clientId}`);
 
     let connack: MqttPackets.ConnackPacket;
 
@@ -292,7 +363,7 @@ export class WsBroker extends EventTarget {
     }
 
     this.clients.set(
-      connect.clientId,
+      socket,
       new Client(connect.clientId, connect.protocolVersion, socket),
     );
 
@@ -335,8 +406,164 @@ export class WsBroker extends EventTarget {
           returnCode: Mqtt.V3_1_1_ConnectReturnCode.ConnectionAccepted,
         };
       }
+
+      debug('send packet', connack);
       const bytes = MqttPackets.packetToBytes(connack, connect.protocolVersion);
+      debug('send bytes', bytes);
       await socket.send(bytes);
+    }
+  }
+
+  async handleMqttPublish(socket: WebSocket, publish: MqttPackets.PublishPacket): Promise<void> {
+    const client = this.clients.get(socket);
+    if (client) {
+      debug('handleMqttPublish', `clientId: ${client.clientId}`);
+
+      switch (publish.qos) {
+        case Mqtt.QoS.AT_MOST_ONCE:
+          break;
+        case Mqtt.QoS.AT_LEAST_ONCE:
+          {
+            const puback: MqttPackets.PubackPacket = {
+              type: 'puback',
+              packetId: publish.packetId!,
+              reasonCode: Mqtt.ReasonCode.Success,
+            };
+            debug('send packet', puback);
+            const bytes = MqttPackets.packetToBytes(puback, client.protocolVersion);
+            debug('send bytes', bytes);
+            await socket.send(bytes);
+          }
+          break;
+
+        case Mqtt.QoS.EXACTRY_ONCE:
+          {
+            const pubrec: MqttPackets.PubrecPacket = {
+              type: 'pubrec',
+              packetId: publish.packetId!,
+              reasonCode: Mqtt.ReasonCode.Success,
+            };
+            debug('send packet', pubrec);
+            const bytes = MqttPackets.packetToBytes(pubrec, client.protocolVersion);
+            debug('send bytes', bytes);
+            await socket.send(bytes);
+          }
+          break;
+        default:
+          return;
+      }
+
+      const topic = publish.topic;
+      this.clients.forEach((client) => {
+        if (client.hasSubscription(topic)) {
+          const packet: MqttPackets.PublishPacket = {
+            type: 'publish',
+            topic,
+            payload: publish.payload,
+            dup: false,
+            retain: false,
+            qos: Mqtt.QoS.AT_MOST_ONCE,
+            packetId: 0,
+            properties: publish.properties,
+          };
+
+          debug('send packet', packet);
+          const bytes = MqttPackets.packetToBytes(packet, client.protocolVersion);
+          debug('send bytes', bytes);
+          client.conn.send(bytes);
+        }
+      });
+    } else {
+      error('handleMqttPublish', `unknown client`);
+    }
+  }
+
+  async handleMqttPuback(socket: WebSocket, puback: MqttPackets.PubackPacket): Promise<void> {
+    const client = this.clients.get(socket);
+    if (client) {
+      debug('handleMqttPuback', `clientId: ${client.clientId}`);
+    } else {
+      error('handleMqttPuback', `unknown client`);
+    }
+  }
+  async handleMqttPubrec(socket: WebSocket, pubrec: MqttPackets.PubrecPacket): Promise<void> {
+    const client = this.clients.get(socket);
+    if (client) {
+      debug('handleMqttPubrec', `clientId: ${client.clientId}`);
+
+      const packet: MqttPackets.PubrelPacket = {
+        type: 'pubrel',
+        packetId: pubrec.packetId,
+        reasonCode: Mqtt.ReasonCode.Success,
+      };
+      debug('send packet', packet);
+      const bytes = MqttPackets.packetToBytes(packet, client.protocolVersion);
+      debug('send bytes', bytes);
+      await socket.send(bytes);
+    } else {
+      error('handleMqttPubrec', `unknown client`);
+    }
+  }
+  async handleMqttPubrel(socket: WebSocket, pubrel: MqttPackets.PubrelPacket): Promise<void> {
+    const client = this.clients.get(socket);
+    if (client) {
+      debug('handleMqttPubrel', `clientId: ${client.clientId}`);
+      const packet: MqttPackets.PubcompPacket = {
+        type: 'pubcomp',
+        packetId: pubrel.packetId,
+        reasonCode: Mqtt.ReasonCode.Success,
+      };
+      debug('send packet', packet);
+      const bytes = MqttPackets.packetToBytes(packet, client.protocolVersion);
+      debug('send bytes', bytes);
+      await socket.send(bytes);
+    } else {
+      error('handleMqttPubrel', `unknown client`);
+    }
+  }
+  async handleMqttPubcomp(socket: WebSocket, pubcomp: MqttPackets.PubcompPacket): Promise<void> {
+    const client = this.clients.get(socket);
+    if (client) {
+      debug('handleMqttPubcomp', `clientId: ${client.clientId}`);
+    } else {
+      error('handleMqttPubcomp', `unknown client`);
+    }
+  }
+
+  async handleMqttSubscribe(socket: WebSocket, subscribe: MqttPackets.SubscribePacket): Promise<void> {
+    const client = this.clients.get(socket);
+    if (client) {
+      debug('handleMqttSubscribe', `clientId: ${client.clientId}`);
+
+      client.subscribe(subscribe.subscriptions[0].topicFilter, subscribe.subscriptions[0].qos);
+
+      const suback: MqttPackets.SubackPacket = {
+        type: 'suback',
+        packetId: subscribe.packetId,
+        reasonCodes: [Mqtt.ReasonCode.GrantedQoS0],
+      };
+      debug('send packet', suback);
+      const bytes = MqttPackets.packetToBytes(suback, client.protocolVersion);
+      debug('send bytes', bytes);
+      await socket.send(bytes);
+    } else {
+      error('handleMqttSubscribe', `unknown client`);
+    }
+  }
+
+  async handleMqttPingreq(socket: WebSocket): Promise<void> {
+    const client = this.clients.get(socket);
+    if (client) {
+      debug('handleMqttConnect', `clientId: ${client.clientId}`);
+      const pingresp: MqttPackets.PingrespPacket = {
+        type: 'pingresp',
+      };
+      debug('send packet', pingresp);
+      const bytes = MqttPackets.packetToBytes(pingresp, client.protocolVersion);
+      debug('send bytes', bytes);
+      await socket.send(bytes);
+    } else {
+      error('handleMqttConnect', `unknown client`);
     }
   }
 }
